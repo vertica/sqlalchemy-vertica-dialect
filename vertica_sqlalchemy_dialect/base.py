@@ -18,99 +18,128 @@
 
 from __future__ import annotations
 from __future__ import absolute_import, unicode_literals, print_function, division
-import logging
 from typing import Any, Dict, Optional, List, Tuple
 import logging
-from datetime import datetime
 from sqlalchemy import exc
 from sqlalchemy import sql
 from sqlalchemy import util
 from textwrap import dedent
 from collections import defaultdict
-from functools import lru_cache
 import re
-import traceback
 
-
-
-from sqlalchemy.dialects.postgresql import BYTEA, DOUBLE_PRECISION, INTERVAL
 from sqlalchemy.dialects.postgresql.base import PGDialect, PGDDLCompiler
 from sqlalchemy.engine import default
 from sqlalchemy.engine import reflection
+from sqlalchemy.sql.compiler import GenericTypeCompiler
 from sqlalchemy.types import (
     INTEGER,
-    BIGINT,
-    SMALLINT,
     VARCHAR,
     CHAR,
     NUMERIC,
     FLOAT,
-    REAL,
     DATE,
-    DATETIME,
     BOOLEAN,
-    BLOB,
-    TIMESTAMP,
-    TIME,
     VARBINARY,
     BINARY,
+    TIME,
+    TIMESTAMP,
+    String,
+    NullType,
+    ARRAY
 )
-from sqlalchemy.sql.sqltypes import TIME, TIMESTAMP, String
 from sqlalchemy.sql import sqltypes
 from functools import lru_cache
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-ischema_names = {
-    "INT": INTEGER,
-    "INTEGER": INTEGER,
-    "INT8": INTEGER,
-    "BIGINT": BIGINT,
-    "SMALLINT": SMALLINT,
-    "TINYINT": SMALLINT,
-    "CHAR": CHAR,
-    "VARCHAR": VARCHAR,
-    "VARCHAR2": VARCHAR,
-    "TEXT": VARCHAR,
-    "NUMERIC": NUMERIC,
-    "DECIMAL": NUMERIC,
-    "NUMBER": NUMERIC,
-    "MONEY": NUMERIC,
-    "FLOAT": FLOAT,
-    "FLOAT8": FLOAT,
-    "REAL": REAL,
-    "DOUBLE": DOUBLE_PRECISION,
-    "TIMESTAMP": TIMESTAMP,
-    "TIMESTAMP WITH TIMEZONE": TIMESTAMP(timezone=True),
-    "TIMESTAMPTZ": TIMESTAMP(timezone=True),
-    "TIME": TIME,
-    "TIME WITH TIMEZONE": TIME(timezone=True),
-    "TIMETZ": TIME(timezone=True),
-    "INTERVAL": INTERVAL,
-    "INTERVAL HOUR TO SECOND":INTERVAL,
-    "INTERVAL HOUR TO MINUTE":INTERVAL,
-    "INTERVAL DAY TO SECOND":INTERVAL,
-    "INTERVAL YEAR TO MONTH":INTERVAL,
-    "DOUBLE PRECISION": DOUBLE_PRECISION,
-    "DATE": DATE,
-    "DATETIME": DATETIME,
-    "SMALLDATETIME": DATETIME,
-    "BINARY": BINARY,
-    "VARBINARY": VARBINARY,
-    "RAW": BLOB,
-    "BYTEA": BYTEA,
-    "BOOLEAN": BOOLEAN,
-    "LONG VARBINARY": BLOB,
-    "LONG VARCHAR": VARCHAR,
-    "GEOMETRY": BLOB,
-    "GEOGRAPHY":BLOB
-}
-
 
 class UUID(String):
     """The SQL UUID type."""
-
     __visit_name__ = "UUID"
+
+
+class LONGVARCHAR(String):
+    """The Vertica SQL LONG VARCHAR type."""
+    __visit_name__ = "LONG_VARCHAR"
+
+
+class LONGVARBINARY(String):
+    """The SQL UUID type."""
+    __visit_name__ = "LONG_VARBINARY"
+
+
+class VerticaTypeCompiler(GenericTypeCompiler):
+    def visit_LONG_VARCHAR(self, type_, **kw):
+        return self._render_string_type(type_, "LONG VARCHAR")
+
+    def visit_LONG_VARBINARY(self, type_, **kw):
+        return self._render_string_type(type_, "LONG VARBINARY")
+
+    def visit_UUID(self, type_, **kw):
+        return "UUID"
+
+
+colspecs = {}
+
+ischema_names = {
+    "UNKNOWN": NullType,
+    "BOOLEAN": BOOLEAN,
+    "INT": INTEGER,
+    "INTEGER": INTEGER,
+    "FLOAT": FLOAT,
+    "VARCHAR": VARCHAR,
+    "LONG VARCHAR": LONGVARCHAR,
+    "CHAR": CHAR,
+    "DATE": DATE,
+    "TIME": TIME,
+    "TIMETZ": TIME(timezone=True),
+    "TIMESTAMP": TIMESTAMP,
+    "TIMESTAMPTZ": TIMESTAMP(timezone=True),
+    "BINARY": BINARY,
+    "VARBINARY": VARBINARY,
+    "LONG VARBINARY": LONGVARBINARY,
+    "NUMERIC": NUMERIC,
+    "UUID": UUID,
+    "ARRAY": ARRAY,
+    "ROW": BINARY,
+    "MAP": VARCHAR,
+    "ARRAY[BOOLEAN]": BOOLEAN,
+    "ARRAY[INT8]": INTEGER,
+    "ARRAY[FLOAT8]": FLOAT,
+    "ARRAY[CHAR]": CHAR,
+    "ARRAY[VARCHAR]": VARCHAR,
+    "ARRAY[DATE]": DATE,
+    "ARRAY[TIME]": TIME,
+    "ARRAY[TIMESTAMP]": TIMESTAMP,
+    "ARRAY[TIMESTAMPTZ]": TIMESTAMP(timezone=True),
+    "ARRAY[TIMETZ]": TIME(timezone=True),
+    "ARRAY[NUMERIC]": NUMERIC,
+    "ARRAY[VARBINARY]": VARBINARY,
+    "ARRAY[UUID]": UUID,
+    "ARRAY[BINARY]": BINARY,
+    "ARRAY[LONG VARCHAR]": LONGVARCHAR,
+    "ARRAY[LONG VARBINARY]": LONGVARBINARY,
+    "SET[BOOLEAN]": BOOLEAN,
+    "SET[INT8]": INTEGER,
+    "SET[FLOAT8]": FLOAT,
+    "SET[CHAR]": CHAR,
+    "SET[VARCHAR]": VARCHAR,
+    "SET[DATE]": DATE,
+    "SET[TIME]": TIME,
+    "SET[TIMESTAMP]": TIMESTAMP,
+    "SET[TIMESTAMPTZ]": TIMESTAMP(timezone=True),
+    "SET[TIMETZ]": TIME(timezone=True),
+    "SET[NUMERIC]": NUMERIC,
+    "SET[VARBINARY]": VARBINARY,
+    "SET[UUID]": UUID,
+    "SET[BINARY]": BINARY,
+    "SET[LONG VARCHAR]": LONGVARCHAR,
+    "SET[LONG VARBINARY]": LONGVARBINARY,
+    "GEOMETRY": BINARY,
+    "GEOGRAPHY": BINARY
+}
+
+max_long_varchar_length = 2 * 1000 * 1000
 
 
 class TIMESTAMP_WITH_PRECISION(TIMESTAMP):
@@ -139,7 +168,6 @@ class TIMESTAMP_WITH_PRECISION(TIMESTAMP):
         """
         super(TIMESTAMP, self).__init__(timezone=timezone)
         self.precision = precision
-       
 
 
 def TIMESTAMP_WITH_TIMEZONE(*args, **kwargs):
@@ -162,9 +190,10 @@ class VerticaDDLCompiler(PGDDLCompiler):
             colspec += " AUTO_INCREMENT"
         else:
             colspec += " " + self.dialect.type_compiler.process(column.type)
-            default = self.get_column_default_string(column)
-            if default is not None:
-                colspec += " DEFAULT " + default
+
+            # default = self.get_column_default_string(column)
+            # if default is not None:
+            #     colspec += " DEFAULT " + default
 
         if not column.nullable:
             colspec += " NOT NULL"
@@ -175,7 +204,7 @@ class VerticaInspector(reflection.Inspector):
     dialect: VerticaDialect
 
     def get_projection_names(
-        self, schema: Optional[str] = None, **kw: Any
+            self, schema: Optional[str] = None, **kw: Any
     ) -> List[str]:
         r"""Return all Models names within a particular schema."""
 
@@ -204,7 +233,7 @@ class VerticaInspector(reflection.Inspector):
         """
         return self.dialect._get_extra_tags(self.bind, table, schema)
 
-    def get_projection_comment(self, projection,schema=None, **kw):
+    def get_projection_comment(self, projection, schema=None, **kw):
         """Return information about the table properties for ``table_name``.
             as key and value.
 
@@ -214,7 +243,7 @@ class VerticaInspector(reflection.Inspector):
         """
 
         return self.dialect.get_projection_comment(
-            self.bind,projection, schema, info_cache=self.info_cache, **kw
+            self.bind, projection, schema, info_cache=self.info_cache, **kw
         )
 
     def get_model_comment(self, model_name, schema=None, **kw):
@@ -276,14 +305,14 @@ class VerticaInspector(reflection.Inspector):
         return self.dialect._get_schema_properties(self.bind, schema, **kw)
 
     def get_table_owner(
-        self, table: Optional[str] = None, schema: Optional[str] = None, **kw: Any
+            self, table: Optional[str] = None, schema: Optional[str] = None, **kw: Any
     ):
         r"""Return primary key columns names within a particular schema."""
 
         return self.dialect.get_table_owner(
             self.bind, table, schema, info_cache=self.info_cache, **kw
         )
-        
+
     def get_all_columns(self, table, schema: Optional[str] = None, **kw: Any):
         r"""Return all table columns names within a particular schema."""
 
@@ -291,20 +320,18 @@ class VerticaInspector(reflection.Inspector):
             self.bind, table, schema, info_cache=self.info_cache, **kw
         )
 
-   
-
     def get_table_comment(
-        self, table: Optional[str] = None, schema: Optional[str] = None, **kw
+            self, table: Optional[str] = None, schema: Optional[str] = None, **kw
     ):
         return self.dialect.get_table_comment(
             self.bind, table, schema, info_cache=self.info_cache, **kw
         )
 
-    def get_view_columns(self,view: Optional[str] = None, schema: Optional[str] = None, **kw: Any):
+    def get_view_columns(self, view: Optional[str] = None, schema: Optional[str] = None, **kw: Any):
         r"""Return all view columns names within a particular schema."""
 
         return self.dialect.get_view_columns(
-            self.bind,view, schema, info_cache=self.info_cache, **kw
+            self.bind, view, schema, info_cache=self.info_cache, **kw
         )
 
     def get_view_comment(self, view: Optional[str] = None, schema: Optional[str] = None, **kw):
@@ -314,7 +341,7 @@ class VerticaInspector(reflection.Inspector):
             self.bind, view, schema, info_cache=self.info_cache, **kw
         )
 
-    def get_view_owner(self,view: Optional[str] = None, schema: Optional[str] = None, **kw: Any):
+    def get_view_owner(self, view: Optional[str] = None, schema: Optional[str] = None, **kw: Any):
         r"""Return primary key columns names within a particular schema."""
 
         return self.dialect.get_view_owner(
@@ -330,20 +357,20 @@ class VerticaInspector(reflection.Inspector):
         r"""Return all projection columns names within a particular schema."""
 
         return self.dialect.get_projection_columns(
-            self.bind,projection, schema, info_cache=self.info_cache, **kw
+            self.bind, projection, schema, info_cache=self.info_cache, **kw
         )
 
-    def get_projection_owner(self,projection, schema: Optional[str] = None, **kw: Any):
+    def get_projection_owner(self, projection, schema: Optional[str] = None, **kw: Any):
         r"""Return all projection columns names within a particular schema."""
 
         return self.dialect.get_projection_owner(
-            self.bind,projection, schema, info_cache=self.info_cache, **kw
+            self.bind, projection, schema, info_cache=self.info_cache, **kw
         )
 
-    def _populate_projection_lineage(self,projection, schema: Optional[str] = None, **kw: Any):
+    def _populate_projection_lineage(self, projection, schema: Optional[str] = None, **kw: Any):
         r"""Return primary key columns names within a particular schema."""
 
-        return self.dialect._populate_projection_lineage(self.bind, projection,schema, **kw)
+        return self.dialect._populate_projection_lineage(self.bind, projection, schema, **kw)
 
 
 # noinspection PyArgumentList,PyAbstractClass
@@ -352,7 +379,38 @@ class VerticaInspector(reflection.Inspector):
 class VerticaDialect(default.DefaultDialect):
     name = "vertica"
     ischema_names = ischema_names
+
+    supports_statement_cache = True
+    supports_alter = True
+    max_identifier_length = 63
+    supports_sane_rowcount = True
+
+    supports_native_enum = True
+    supports_native_boolean = True
+    supports_smallserial = True
+
+    supports_sequences = True
+    sequences_optional = True
+    preexecute_autoincrement_sequences = True
+    postfetch_lastrowid = False
+
+    supports_comments = True
+    supports_default_values = True
+
+    supports_default_metavalue = True
+
+    supports_empty_insert = False
+    supports_multivalues_insert = False
+    supports_identity_columns = True
+
+    colspecs = colspecs
+    isolation_level = None
+
+    implicit_returning = True
+    full_returning = True
+
     ddl_compiler = VerticaDDLCompiler
+    type_compiler = VerticaTypeCompiler
     inspector = VerticaInspector
 
     def __init__(self, json_serializer=None, json_deserializer=None, **kwargs):
@@ -365,10 +423,10 @@ class VerticaDialect(default.DefaultDialect):
         super().initialize(connection)
 
     def _get_default_schema_name(self, connection):
-        return connection.scalar("SELECT current_schema()")
+        return connection.scalar(sql.text("SELECT current_schema()"))
 
     def _get_server_version_info(self, connection):
-        v = connection.scalar("SELECT version()")
+        v = connection.scalar(sql.text("SELECT version()"))
         m = re.match(r".*Vertica Analytic Database v(\d+)\.(\d+)\.(\d)+.*", v)
         if not m:
             raise AssertionError(
@@ -378,7 +436,7 @@ class VerticaDialect(default.DefaultDialect):
 
     # noinspection PyRedeclaration
     def _get_default_schema_name(self, connection):
-        return connection.scalar("SELECT current_schema()")
+        return connection.scalar(sql.text("SELECT current_schema()"))
 
     def create_connect_args(self, url):
         opts = url.translate_connect_args(username="user")
@@ -401,7 +459,7 @@ class VerticaDialect(default.DefaultDialect):
         c = connection.execute(has_schema_sql)
         return bool(c.scalar())
 
-    def has_table(self, connection, table_name, schema=None):
+    def has_table(self, connection, table_name, schema=None, info_cache=None):
         if schema is None:
             schema = self._get_default_schema_name(connection)
 
@@ -552,7 +610,7 @@ class VerticaDialect(default.DefaultDialect):
                     function_name 
                 FROM 
                     USER_FUNCTIONS
-                Where schema_name  = '%(schema)s'
+                WHERE lower(schema_name)  = '%(schema)s'
             """
                     % {
                         "schema": schema.lower(),
@@ -598,11 +656,9 @@ class VerticaDialect(default.DefaultDialect):
 
         c = connection.execute(get_schemas_sql)
         return [row[0] for row in c if not row[0].startswith("v_")]
-    
-    
+
     @lru_cache(maxsize=None)
-    def fetch_table_properties(self,connection, schema):
-        
+    def fetch_table_properties(self, connection, schema):
 
         sct = sql.text(
             dedent(
@@ -618,7 +674,6 @@ class VerticaDialect(default.DefaultDialect):
                 % {"schema": schema.lower()}
             )
         )
-
 
         table_size_query = sql.text(
             dedent(
@@ -637,7 +692,7 @@ class VerticaDialect(default.DefaultDialect):
         properties = []
         for row in connection.execute(sct):
             properties.append({"create_time": str(row[0]), "table_name": row[1]})
-        
+
         # Dictionary to store table sizes
         table_size_dict = {}
 
@@ -650,13 +705,11 @@ class VerticaDialect(default.DefaultDialect):
             else:
                 table_size_dict[table_name] += str(TableSize) + " KB"
 
-
         for a in properties:
             if a["table_name"] in table_size_dict:
                 a["table_size"] = table_size_dict[a["table_name"]]
             else:
                 a["table_size"] = "0 KB"
-                
 
         return properties
 
@@ -670,26 +723,24 @@ class VerticaDialect(default.DefaultDialect):
             for prop in properties
             if prop["table_name"].lower() == table_name.lower()
         ]
-        
-        
+
         # below code tracks it function is called from a view or a table
         # if called from table it return table_size , if called from view it only returns create_time .
-        
+
         # stack = traceback.extract_stack(limit=-10)
         # function_names = [frame.name for frame in stack]
         # called_from = function_names[-1]
-        
+
         # if called_from == "loop_tables":
-            
+
         table_properties = {
             "create_time": filtered_properties[0]['create_time'],
             "table_size": filtered_properties[0]['table_size'],
-           }
+        }
         # else:
         #     table_properties = {
         #             "create_time": filtered_properties[0]['create_time'],
         #         }
-            
 
         return {
             "text": "References the properties of a native table in Vertica. \
@@ -761,7 +812,7 @@ class VerticaDialect(default.DefaultDialect):
         get_tables_sql = sql.text(
             dedent(
                 """
-            SELECT lower(table_name) as table_name
+            SELECT table_name as table_name
             FROM v_catalog.tables
             WHERE %(schema_condition)s
             ORDER BY table_schema, table_name
@@ -810,7 +861,7 @@ class VerticaDialect(default.DefaultDialect):
         get_views_sql = sql.text(
             dedent(
                 """
-            SELECT lower(table_name) as table_name
+            SELECT table_name as table_name
             FROM v_catalog.views
             WHERE %(schema_condition)s
             ORDER BY table_schema, lower(table_name)
@@ -821,37 +872,36 @@ class VerticaDialect(default.DefaultDialect):
 
         c = connection.execute(get_views_sql)
         return [row[0] for row in c]
-    
+
     @lru_cache(maxsize=None)
-    def fetch_view_definitions(self, connection,schema):
+    def fetch_view_definitions(self, connection, schema):
         if schema is not None:
             schema_condition = "lower(table_schema) = '%(schema)s'" % {
                 "schema": schema.lower()
             }
         else:
             schema_condition = "1"
-            
+
         definition = []
-            
+
         view_def = sql.text(
-                dedent(
-                    """
-                    SELECT VIEW_DEFINITION , table_name
-                    FROM V_CATALOG.VIEWS
-                    WHERE table_schema='%(schema)s' 
-                    """
-                    % {"schema": schema.lower()}
-                )
+            dedent(
+                """
+                SELECT VIEW_DEFINITION , table_name
+                FROM V_CATALOG.VIEWS
+                WHERE lower(table_schema) = '%(schema)s' 
+                """
+                % {"schema": schema.lower()}
             )
-        
+        )
+
         for data in connection.execute(view_def):
             definition.append({
                 "view_def": data['VIEW_DEFINITION'],
-                "table_name": data['table_name'].lower()
+                "table_name": data['table_name']
             })
 
         return definition
-        
 
     def get_view_definition(self, connection, view_name, schema=None, **kw):
         if schema is not None:
@@ -860,18 +910,17 @@ class VerticaDialect(default.DefaultDialect):
             }
         else:
             schema_condition = "1"
-            
-        view_def = self.fetch_view_definitions(connection,schema)
-        
+
+        view_def = self.fetch_view_definitions(connection, schema)
+
         def_info = [
             prop for prop in view_def if prop["table_name"].lower() == view_name.lower()
         ]
-        
+
         if len(def_info) == 0:
             return None
         else:
             return def_info[0]['view_def']
-
 
         return view_definition
 
@@ -885,36 +934,33 @@ class VerticaDialect(default.DefaultDialect):
         s = sql.text(
             dedent(
                 """
-                SELECT column_name, data_type, '' as column_default, true as is_nullable, lower(table_name) as table_name
+                SELECT column_name, data_type, '' as column_default, true as is_nullable, table_name as table_name
                 FROM v_catalog.columns
                 where lower(table_schema) = '%(schema)s'
                 UNION ALL
-                SELECT column_name, data_type, '' as column_default, true as is_nullable, lower(table_name) as table_name
+                SELECT column_name, data_type, '' as column_default, true as is_nullable, table_name as table_name
                 FROM v_catalog.view_columns
                 where lower(table_schema) = '%(schema)s'
-                
-                
+
+
             """
                 % {"schema": schema.lower()}
             )
         )
-        
-        
+
         columns = []
         for row in connection.execute(s):
-            name = row.column_name.lower()
+            name = row.column_name
             dtype = row.data_type.lower()
             default = row.column_default
             nullable = row.is_nullable
-            table_name = row.table_name.lower()
+            table_name = row.table_name
             column_info = self._get_column_info(
                 name, dtype, default, nullable, table_name, schema
             )
             columns.append(column_info)
         # print("projection_columns",columns)
         return columns
-    
-
 
     # TODO this function doesnt seem to work even though the query is right
 
@@ -928,7 +974,7 @@ class VerticaDialect(default.DefaultDialect):
                 """
                     SELECT constraint_name, column_name
                     FROM v_catalog.constraint_columns
-                    WHERE table_name = '%(table)s' AND table_schema = '%(schema)s'
+                    WHERE lower(table_name) = '%(table)s' AND lower(table_schema) = '%(schema)s'
                     """
                 % {"schema": schema.lower(), "table": table_name.lower()}
             )
@@ -988,7 +1034,7 @@ class VerticaDialect(default.DefaultDialect):
         return None
 
     def _get_column_info(  # noqa: C901
-        self, name, data_type, default, is_nullable, table_name, schema=None
+            self, name, data_type, default, is_nullable, table_name, schema=None
     ):
         attype: str = re.sub(r"\(.*\)", "", data_type)
 
@@ -1012,8 +1058,8 @@ class VerticaDialect(default.DefaultDialect):
             args = ()  # type: ignore
         elif attype in ("timestamptz", "timetz"):
             kwargs["timezone"] = True
-        #     # if charlen:
-        #     #     kwargs["precision"] = int(charlen)  # type: ignore
+            #     # if charlen:
+            #     #     kwargs["precision"] = int(charlen)  # type: ignore
             args = ()  # type: ignore
         # elif attype in ("timestamp", "time"):
         #     kwargs["timezone"] = False
@@ -1041,10 +1087,10 @@ class VerticaDialect(default.DefaultDialect):
                 coltype = None
                 break
 
-        self.ischema_names["UUID"] = UUID
-        self.ischema_names["TIMESTAMP"] = TIMESTAMP_WITH_PRECISION
-        self.ischema_names["TIMESTAMPTZ"] = TIMESTAMP_WITH_TIMEZONE
-        self.ischema_names["TIMETZ"] = TIME_WITH_TIMEZONE
+        # self.ischema_names["UUID"] = UUID
+        # self.ischema_names["TIMESTAMP"] = TIMESTAMP_WITH_PRECISION
+        # self.ischema_names["TIMESTAMPTZ"] = TIMESTAMP_WITH_TIMEZONE
+        # self.ischema_names["TIMETZ"] = TIME_WITH_TIMEZONE
 
         if coltype:
             coltype = coltype(*args, **kwargs)
@@ -1066,11 +1112,11 @@ class VerticaDialect(default.DefaultDialect):
                     # later be enhanced to obey quoting rules /
                     # "quote schema"
                     default = (
-                        match.group(1)
-                        + ('"%s"' % sch)
-                        + "."
-                        + match.group(2)
-                        + match.group(3)
+                            match.group(1)
+                            + ('"%s"' % sch)
+                            + "."
+                            + match.group(2)
+                            + match.group(3)
                     )
 
         column_info = dict(
@@ -1132,7 +1178,7 @@ class VerticaDialect(default.DefaultDialect):
                 SELECT column_name ,table_name
                 FROM v_catalog.primary_keys
                 WHERE lower(table_schema) = '%(schema)s'
-                
+
             """
                 % {"schema": schema.lower()}
             )
@@ -1141,8 +1187,10 @@ class VerticaDialect(default.DefaultDialect):
         pk_columns = []
 
         for row in connection.execute(spk):
-            columns = row["column_name"]
-            table_name = row["table_name"].lower()
+            # columns = row["column_name"]
+            # table_name = row["table_name"]
+            columns = row[0]
+            table_name = row[1]
             pk_columns.append(
                 {
                     "constrained_columns": [columns],
@@ -1159,17 +1207,15 @@ class VerticaDialect(default.DefaultDialect):
         pk_columns = [
             prop for prop in pk if prop["table_name"].lower() == table_name.lower()
         ]
-        
+
         if len(pk_columns) == 0:
             return None
         else:
             return pk_columns[0]
-            
-
 
     # @reflection.cache
     def _get_extra_tags(
-        self, connection, name, schema=None
+            self, connection, name, schema=None
     ) -> Optional[Dict[str, str]]:
         if schema is not None:
             schema_condition = "lower(table_schema) = '%(schema)s'" % {
@@ -1455,34 +1501,34 @@ class VerticaDialect(default.DefaultDialect):
         return cached_projection
 
     @lru_cache(maxsize=None)
-    def fetch_projection_comments(self,connection,schema):
+    def fetch_projection_comments(self, connection, schema):
         src = sql.text(
             dedent(
                 """
-                SELECT ros_count , LOWER(projection_name)
+                SELECT ros_count , projection_name
                 FROM v_monitor.projection_storage
-                WHERE projection_schema = '%(schema)s'
+                WHERE lower(projection_schema) = '%(schema)s'
 
             """
-                % {"schema": schema}
+                % {"schema": schema.lower()}
             )
         )
 
         projection_type = sql.text(
             dedent(
                 """
-                SELECT DISTINCT is_super_projection,is_key_constraint_projection,is_aggregate_projection,has_expressions ,LOWER(projection_name)
+                SELECT DISTINCT is_super_projection,is_key_constraint_projection,is_aggregate_projection,has_expressions ,projection_name
                 FROM v_catalog.projections
-                WHERE projection_schema = '%(schema)s' 
+                WHERE lower(projection_schema) = '%(schema)s' 
                 """
-                % {"schema": schema}
+                % {"schema": schema.lower()}
             )
         )
 
         is_segmented = sql.text(
             dedent(
                 """
-                SELECT is_segmented , segment_expression , LOWER(projection_name)
+                SELECT is_segmented , segment_expression , projection_name
                 FROM v_catalog.projections 
                 WHERE projection_schema = '%(schema)s'
             """
@@ -1493,10 +1539,10 @@ class VerticaDialect(default.DefaultDialect):
         partition_key = sql.text(
             dedent(
                 """
-                SELECT  DISTINCT LOWER(projection_name) ,  partition_key 
+                SELECT  DISTINCT projection_name, partition_key 
                 FROM v_monitor.partitions
                 WHERE table_schema = '%(schema)s'
-              
+
             """
                 % {"schema": schema}
             )
@@ -1517,24 +1563,24 @@ class VerticaDialect(default.DefaultDialect):
         num_of_partition = sql.text(
             dedent(
                 """
-                    SELECT  LOWER(projection_name) ,  count(partition_key) as Partition_Size
+                    SELECT  projection_name,  count(partition_key) as Partition_Size
                     FROM v_monitor.partitions WHERE lower(table_schema) = '%(schema)s'  
                     group by 1;
 
-                
+
                 """
-                % {"schema": schema}
+                % {"schema": schema.lower()}
             )
         )
 
         projection_size = sql.text(
             dedent(
                 """
-            SELECT used_bytes , LOWER(projection_name) 
+            SELECT used_bytes, projection_name)
             from v_monitor.projection_storage
-            WHERE projection_schema = '%(schema)s'
+            WHERE lower(projection_schema) = '%(schema)s'
         """
-                % {"schema": schema}
+                % {"schema": schema.lower()}
             )
         )
 
@@ -1566,7 +1612,6 @@ class VerticaDialect(default.DefaultDialect):
             "has_expressions",
         ]
 
-
         for ptype in connection.execute(projection_type):
             for i, value in enumerate(ptype):
                 if value is True:
@@ -1574,7 +1619,7 @@ class VerticaDialect(default.DefaultDialect):
                         if a["projection_name"] == ptype[4]:
                             if "Projection_Type" in a:
                                 a["Projection_Type"] = (
-                                    a["Projection_Type"] + ", " + str(lst[i])
+                                        a["Projection_Type"] + ", " + str(lst[i])
                                 )
                             else:
                                 a["Projection_Type"] = str(lst[i])
@@ -1601,19 +1646,17 @@ class VerticaDialect(default.DefaultDialect):
             for a in projection_comment:
                 if a["projection_name"] in projection_size_dict:
                     a["projection_size"] = (
-                        str(int(projection_size_dict[a["projection_name"]])) + " KB"
+                            str(int(projection_size_dict[a["projection_name"]])) + " KB"
                     )
 
                 else:
                     a["projection_size"] = "0 KB"
 
         for partition_number in connection.execute(num_of_partition):
-           
+
             for a in projection_comment:
                 if a["projection_name"].lower() == partition_number[0].lower():
                     a["Partition_Size"] = str(partition_number[1])
-                   
-
 
         for projection_cached in connection.execute(projection_cache):
             for a in projection_comment:
@@ -1623,61 +1666,59 @@ class VerticaDialect(default.DefaultDialect):
                     a["Projection_Cached"] = False
 
         return projection_comment
-        
-    
+
     def get_projection_comment(self, connection, projection, schema=None, **kw):
         try:
 
-            comments = self.fetch_projection_comments(connection,schema)
-            projection_comments  = [prop for prop in comments if prop["projection_name"].lower() == projection.lower()]
-           
-            projection_properties={}
-            
+            comments = self.fetch_projection_comments(connection, schema)
+            projection_comments = [prop for prop in comments if prop["projection_name"].lower() == projection.lower()]
+
+            projection_properties = {}
+
             if 'ROS_Count' in projection_comments[0]:
                 projection_properties["ROS_Count"] = str(projection_comments[0]['ROS_Count'])
             else:
                 projection_properties["ROS_Count"] = "Not Available"
-                
+
             if 'Projection_Type' in projection_comments[0]:
-                projection_properties['Projection_Type']=  str(projection_comments[0]['Projection_Type'])
-            else :
-                projection_properties['Projection_Type']= "Not Available"
-                
+                projection_properties['Projection_Type'] = str(projection_comments[0]['Projection_Type'])
+            else:
+                projection_properties['Projection_Type'] = "Not Available"
+
             if 'is_segmented' in projection_comments[0]:
                 projection_properties['Is_Segmented'] = str(projection_comments[0]['is_segmented'])
             else:
                 projection_properties['Is_Segmented'] = "Not Available"
-                
+
             if 'Segmentation_key' in projection_comments[0]:
                 projection_properties['Segmentation_key'] = str(projection_comments[0]['Segmentation_key'])
             else:
                 projection_properties['Segmentation_key'] = "Not Available"
-                
+
             if 'projection_size' in projection_comments[0]:
                 projection_properties['Projection_size'] = str(projection_comments[0]['projection_size'])
             else:
                 projection_properties['Projection_size'] = "0 KB"
-                
+
             if 'Partition_Key' in projection_comments[0]:
                 projection_properties['Partition_Key'] = str(projection_comments[0]['Partition_Key'])
             else:
                 projection_properties['Partition_Key'] = "Not Available"
-                
+
             if 'Partition_Size' in projection_comments[0]:
                 projection_properties['Number_Of_Partitions'] = str(projection_comments[0]['Partition_Size'])
             else:
-                projection_properties['Number_Of_Partitions'] =  "0" 
-            
+                projection_properties['Number_Of_Partitions'] = "0"
+
             if 'Projection_Cached' in projection_comments[0]:
                 projection_properties['Projection_Cached'] = str(projection_comments[0]['Projection_Cached'])
             else:
                 projection_properties['Projection_Cached'] = "False"
-            
+
 
         except Exception as e:
             print(e)
-      
-        
+
         return {
             "text": "Vertica physically stores table data in projections, \
             which are collections of table columns. Projections store data in a format that optimizes query execution \
@@ -1699,7 +1740,7 @@ class VerticaDialect(default.DefaultDialect):
                 """
                 select owner_name from models
                 where model_name = '%(model)s'
-                
+
             """
                 % {"model": model_name}
             )
@@ -1710,10 +1751,10 @@ class VerticaDialect(default.DefaultDialect):
                 """
                 SELECT 
                     GET_MODEL_ATTRIBUTE 
-                        ( USING PARAMETERS model_name='%(schema)s.%(model)s');
-                
+                        ( USING PARAMETERS lower(model_name)='%(schema)s.%(model)s');
+
             """
-                % {"model": model_name, "schema": schema.lower()}
+                % {"model": model_name.lower(), "schema": schema.lower()}
             )
         )
 
@@ -1743,13 +1784,13 @@ class VerticaDialect(default.DefaultDialect):
                     """
                     SELECT 
                         GET_MODEL_ATTRIBUTE 
-                            ( USING PARAMETERS model_name='%(schema)s.%(model)s', attr_name='%(attr_name)s');
-                    
+                            ( USING PARAMETERS lower(model_name)='%(schema)s.%(model)s', lower(attr_name)='%(attr_name)s');
+
                 """
                     % {
-                        "model": model_name,
+                        "model": model_name.lower(),
                         "schema": schema.lower(),
-                        "attr_name": attr_names,
+                        "attr_name": attr_names.lower(),
                     }
                 )
             )
@@ -1845,14 +1886,14 @@ class VerticaDialect(default.DefaultDialect):
                 "is_fallthrough_enabled": str(is_fallthrough_enabled),
             },
         }
-        
+
     def get_all_columns(self, connection, table, schema=None, **kw):
         columns = self.fetch_table_columns(connection, schema)
         table_columns = [
             prop for prop in columns if prop["table_name"].lower() == table.lower()
         ]
         return table_columns
-    
+
     @reflection.cache
     def get_columns(self, connection, table_name, schema=None, **kw):
         if schema is not None:
@@ -1860,9 +1901,9 @@ class VerticaDialect(default.DefaultDialect):
                 'schema': schema.lower()}
         else:
             schema_condition = "1"
-            
+
         columns = self.fetch_table_columns(connection, schema)
-        
+
         table_columns = [
             prop for prop in columns if prop["table_name"].lower() == table_name.lower()
         ]
@@ -1902,22 +1943,20 @@ class VerticaDialect(default.DefaultDialect):
 
     def get_table_owner(self, connection, table, schema=None, **kw):
         owner = self.fetch_table_owner(connection, schema)
-        
-        
+
         owner_info = [
             prop for prop in owner if prop["table_name"].lower() == table.lower()
         ]
         table_owner = owner_info[0]['owner_name']
-      
-        return table_owner
 
+        return table_owner
 
     @lru_cache(maxsize=None)
     def fetch_view_columns(self, connection, schema):
         s = sql.text(
             dedent(
                 """
-            SELECT column_name, data_type, '' as column_default, true as is_nullable,lower(table_name) as table_name
+            SELECT column_name, data_type, '' as column_default, true as is_nullable,table_name as table_name
             FROM v_catalog.view_columns
             where lower(table_schema) = '%(schema)s'
         """
@@ -1928,32 +1967,30 @@ class VerticaDialect(default.DefaultDialect):
         columns = []
 
         for row in connection.execute(s):
-            name = row.column_name.lower()
+            name = row.column_name
             dtype = row.data_type.lower()
             default = row.column_default
             nullable = row.is_nullable
-            table_name = row.table_name.lower()
+            table_name = row.table_name
 
             column_info = self._get_column_info(
-                name, dtype, default, nullable,table_name, schema
+                name, dtype, default, nullable, table_name, schema
             )
             # print(column_info)
             # column_info.update({'primary_key': primary_key})
             columns.append(column_info)
 
         return columns
-    
-   
- 
+
     def get_view_columns(self, connection, view, schema=None, **kw):
-        
+
         columns = self.fetch_view_columns(connection, schema)
         table_columns = [
             prop for prop in columns if prop["table_name"].lower() == view.lower()
         ]
-        
+
         return table_columns
-    
+
     @lru_cache(maxsize=None)
     def fetch_view_comment(self, connection, schema):
         if schema is not None:
@@ -1969,8 +2006,8 @@ class VerticaDialect(default.DefaultDialect):
                 SELECT create_time , table_name
                 FROM v_catalog.views
                 where lower(table_schema) = '%(schema)s'
-               
-                
+
+
             """
                 % {"schema": schema.lower()}
             )
@@ -1979,19 +2016,18 @@ class VerticaDialect(default.DefaultDialect):
         comments = []
         for row in connection.execute(sct):
             comments.append({"create_time": str(row[0]), "table_name": row[1]})
-            
+
         return comments
-        
 
     def get_view_comment(self, connection, view, schema=None, **kw):
-        
-        comments = self.fetch_view_comment(connection, schema )
-        
-        view_comments  = [prop for prop in comments if prop["table_name"].lower() == view.lower()]
-        
+
+        comments = self.fetch_view_comment(connection, schema)
+
+        view_comments = [prop for prop in comments if prop["table_name"].lower() == view.lower()]
+
         view_properties = {
-                "create_time": view_comments[0]['create_time'],
-            }
+            "create_time": view_comments[0]['create_time'],
+        }
 
         return {
             "text": "References the properties of a native table in Vertica. \
@@ -2000,7 +2036,6 @@ class VerticaDialect(default.DefaultDialect):
         In order to query or perform any operation on a Vertica table, the table must have one or more projections associated with it. ",
             "properties": view_properties,
         }
-
 
     @lru_cache(maxsize=None)
     def fetch_view_owner(self, connection, schema):
@@ -2031,23 +2066,20 @@ class VerticaDialect(default.DefaultDialect):
             # owner_info = row["owner_name"]
 
         return owner_info
-    
+
     def get_view_owner(self, connection, view, schema=None, **kw):
-        
+
         owner = self.fetch_view_owner(connection, schema)
-        
-        
+
         owner_info = [
             prop for prop in owner if prop["table_name"].lower() == view.lower()
         ]
         view_owner = owner_info[0]['owner_name']
-        
 
         return view_owner
-    
+
     @lru_cache(maxsize=None)
-    def fetch_view_lineage(self, connection,schema) -> None:
-        
+    def fetch_view_lineage(self, connection, schema) -> None:
 
         view_upstream_lineage_query = sql.text(
             dedent(
@@ -2073,10 +2105,6 @@ class VerticaDialect(default.DefaultDialect):
 
         return refrence_table
 
-       
-        
-        
-
     def _populate_view_lineage(self, connection, view, schema: str) -> None:
         """Collects upstream and downstream lineage information for views .
 
@@ -2084,17 +2112,14 @@ class VerticaDialect(default.DefaultDialect):
             view (str): name of the view
 
         """
-        
-                
+
         view_lineage_map: Optional[Dict[str, List[Tuple[str, str, str]]]] = None
-        
+
         refrence_table = self.fetch_view_lineage(connection, schema)
-        
+
         try:
             view_lineage_map = defaultdict(list)
             for lineage in refrence_table:
-                
-                
                 downstream = f"{lineage['database_name']}.{lineage['table_schema']}.{lineage['view_name']}"
 
                 upstream = f"{lineage['database_name']}.{lineage['reference_table_schema']}.{lineage['reference_table_name']}"
@@ -2107,28 +2132,25 @@ class VerticaDialect(default.DefaultDialect):
                     (view_upstream, "[]", "[]")
                 )
 
-                
             return view_lineage_map
 
         except Exception as e:
             import traceback
             print(traceback.format_exc())
-            
-                # logger.info(
-                #     "view_upstream_lineage",
-                #     "Extracting the upstream & Downstream view lineage from vertica failed."
-                #     + f"Please check your permissions. Continuing...\nError was {e}.",
-                    
-                # )
 
-        
+            # logger.info(
+            #     "view_upstream_lineage",
+            #     "Extracting the upstream & Downstream view lineage from vertica failed."
+            #     + f"Please check your permissions. Continuing...\nError was {e}.",
 
-    @lru_cache(maxsize = None)
-    def fetch_projection_columns(self,connection, schema):
+            # )
+
+    @lru_cache(maxsize=None)
+    def fetch_projection_columns(self, connection, schema):
         s = sql.text(
             dedent(
                 """
-            SELECT projection_column_name, data_type, '' as column_default, true as is_nullable,lower(projection_name) as projection_name
+            SELECT projection_column_name, data_type, '' as column_default, true as is_nullable,projection_name as projection_name
             FROM PROJECTION_COLUMNS
             where lower(table_schema) = '%(schema)s'
         """
@@ -2143,29 +2165,29 @@ class VerticaDialect(default.DefaultDialect):
             dtype = row.data_type.lower()
             default = row.column_default
             nullable = row.is_nullable
-            tablename = row.projection_name.lower()
+            tablename = row.projection_name
 
             column_info = self._get_column_info(
-                name, dtype, default, nullable,  tablename, schema,
+                name, dtype, default, nullable, tablename, schema,
             )
             # print(column_info)
             # column_info.update({'primary_key': primary_key})
             columns.append(column_info)
 
         return columns
-    
-    def get_projection_columns(self, connection,projection, schema=None, **kw):
-        
-        columns = self.fetch_projection_columns(connection,schema)
-       
+
+    def get_projection_columns(self, connection, projection, schema=None, **kw):
+
+        columns = self.fetch_projection_columns(connection, schema)
+
         projection_columns = [
             prop for prop in columns if prop["table_name"].lower() == projection.lower()
         ]
-       
+
         return projection_columns
-        
+
     @lru_cache(maxsize=None)
-    def fetch_projection_owner(self,connection,schema):
+    def fetch_projection_owner(self, connection, schema):
         projection_owner_command = sql.text(
             dedent(
                 """
@@ -2183,21 +2205,20 @@ class VerticaDialect(default.DefaultDialect):
             # print(row)
 
         return owner_info
-        
 
-    def get_projection_owner(self, connection, projection,schema=None, **kw):
-        owner = self.fetch_projection_owner(connection,schema)
+    def get_projection_owner(self, connection, projection, schema=None, **kw):
+        owner = self.fetch_projection_owner(connection, schema)
         projections_owner = [
             prop for prop in owner if prop[0].lower() == projection.lower()
         ]
         projection_owner = projections_owner[0][1]
         return projection_owner
-        
+
     @lru_cache(maxsize=None)
-    def fetch_populate_projection_lineage(self,connection,schema):
-        
+    def fetch_populate_projection_lineage(self, connection, schema):
+
         refrence_table = []
-        
+
         projection_upstream_lineage_query = sql.text(
             dedent(
                 """
@@ -2214,9 +2235,8 @@ class VerticaDialect(default.DefaultDialect):
                     "name": data["name"],
                 }
             )
-            
+
         return refrence_table
-        
 
     def _populate_projection_lineage(self, connection, projection, schema: str) -> None:
         """Collects upstream and downstream lineage information for views .
@@ -2225,12 +2245,12 @@ class VerticaDialect(default.DefaultDialect):
             view (str): name of the view
 
         """
-        
+
         projection_lineage_map: Optional[
             Dict[str, List[Tuple[str, str, str]]]
         ] = None
 
-        refrence_table = self.fetch_populate_projection_lineage(connection ,schema)
+        refrence_table = self.fetch_populate_projection_lineage(connection, schema)
 
         try:
             projection_lineage_map = defaultdict(list)
