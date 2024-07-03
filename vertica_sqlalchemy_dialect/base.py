@@ -980,7 +980,15 @@ class VerticaDialect(default.DefaultDialect):
             )
         )
         c = connection.execute(get_constraints_sql)
-        return [{"name": name, "column_names": cols} for name, cols in c.fetchall()]
+
+        dict_list = defaultdict(list)
+        for r in [{"name": name, "column_names": cols} for name, cols in c.fetchall()]:
+            dict_list[r["name"]].append(r["column_names"])
+        result_list = []
+        for el in dict_list:
+            result_list.append({"name": el, "column_names": dict_list[el]});
+        return result_list
+        # return [{"name": name, "column_names": [cols]} for name, cols in c.fetchall()]
 
     @reflection.cache
     def get_check_constraints(self, connection, table_name, schema=None, **kw):
