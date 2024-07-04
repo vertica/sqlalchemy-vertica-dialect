@@ -139,7 +139,7 @@ ischema_names = {
     "GEOGRAPHY": BINARY
 }
 
-max_long_varchar_length = 2 * 1000 * 1000
+max_long_varchar_length = 32 * 1000 * 1000
 
 
 class TIMESTAMP_WITH_PRECISION(TIMESTAMP):
