@@ -838,7 +838,7 @@ class VerticaDialect(default.DefaultDialect):
                     """
                     SELECT VIEW_DEFINITION , table_name
                     FROM V_CATALOG.VIEWS
-                    WHERE table_schema='%(schema)s' 
+                    WHERE lower(table_schema)='%(schema)s' 
                     """
                     % {"schema": schema.lower()}
                 )
